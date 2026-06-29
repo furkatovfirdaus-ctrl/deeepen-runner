@@ -143,11 +143,17 @@
 <!-- DUCK / DASH / PAUSE BUTTONS (touch/mobile) -->
 <div id="duckBtn" class="hidden">⬇<span class="duck-lbl">DUCK</span></div>
 <div id="dashBtn" class="hidden" style="position:fixed;right:96px;bottom:24px;z-index:25;width:64px;height:64px;border-radius:50%;background:rgba(248,192,32,0.18);border:2px solid rgba(248,192,32,0.6);color:#fff;font-size:1.6rem;display:flex;align-items:center;justify-content:center;pointer-events:auto;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:none">⚡<span class="duck-lbl">DASH</span><span id="dashCharges" style="position:absolute;top:-4px;right:-4px;background:#f0c020;color:#000;font-size:0.6rem;font-weight:800;border-radius:50%;width:18px;height:18px;display:none;align-items:center;justify-content:center"></span></div>
-<div id="pauseBtn" class="hidden" style="position:fixed;left:20px;bottom:24px;z-index:25;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;pointer-events:auto;-webkit-tap-highlight-color:transparent;user-select:none" onclick="togglePause()">⏸</div>
+<div id="pauseBtn" class="hidden" style="position:fixed;left:20px;bottom:24px;z-index:25;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.4);color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;pointer-events:auto;-webkit-tap-highlight-color:transparent;user-select:none" onclick="togglePause()">⏸<span style="position:absolute;bottom:-18px;font-size:0.55rem;color:#aaa;letter-spacing:0.05em;text-transform:uppercase;white-space:nowrap">PAUSE</span></div>
 
 <!-- PAUSE OVERLAY -->
 <div id="pauseOverlay" class="screen hidden" style="background:rgba(0,0,0,0.85);z-index:30">
   <div class="go-title">PAUSED</div>
+  <div class="go-stats">
+    <div class="go-stat"><div class="go-stat-val" id="pauseKm">0.00</div><div class="go-stat-lbl">km</div></div>
+    <div class="go-stat"><div class="go-stat-val" id="pauseCoins">0</div><div class="go-stat-lbl">coins</div></div>
+    <div class="go-stat"><div class="go-stat-val" id="pauseCombo">0</div><div class="go-stat-lbl">combo</div></div>
+    <div class="go-stat"><div class="go-stat-val" id="pauseLives">0</div><div class="go-stat-lbl">lives</div></div>
+  </div>
   <button class="btn btn-large" onclick="togglePause()">RESUME</button>
   <button class="btn btn-large btn-outline" onclick="quitToMenu()">QUIT TO MENU</button>
 </div>
@@ -340,7 +346,7 @@ const REGIONS = [
 // below, this means both "which region you're in" and "how far into the run you are" ramp the
 // difficulty — there's always a next, harder thing pulling a player forward.
 REGIONS.forEach((r,idx)=>{
-  const hardMult = 1 + idx*0.15;
+  const hardMult = 1 + idx*0.06;
   r.obstacles.types = r.obstacles.types.concat(['rapidGauntlet','twinBird','chaser']);
   r.obstacles.weights = r.obstacles.weights.concat([10*hardMult, 9*hardMult, 7*hardMult]);
 });
@@ -734,6 +740,7 @@ function startGame() {
     alive: true, paused: false, frame: 0, scroll: 0,
     duckHeld: false,
     lastMilestoneKm: 0, milestoneFlashT: 0,
+    dashBonusAccum: 0,
     combo: 0, comboTimer: 0, comboBest: 0,
     startTime: Date.now(), cheated: false,
     score: 0, coins: 0, lives: maxLives, maxLives,
@@ -749,7 +756,6 @@ function startGame() {
     // Ninja's double_dash perk carries 2 charges instead of 1 — rechargeT counts up toward
     // the next charge whenever charges < maxCharges.
     dash: { active:false, t:0, rechargeT:0, maxCharges: hasPerk(charDef,'double_dash')?2:1, charges: hasPerk(charDef,'double_dash')?2:1 },
-    expectedX: Math.floor(W*0.18),
     // Screen shake on taking damage
     shakeT: 0, shakeMag: 0,
     // Delta-time bookkeeping so physics run at the same real-world speed on any refresh rate
@@ -843,6 +849,12 @@ function doDash() {
   G.dash.charges--;
   G.dash.active = true; G.dash.t = 0;
   G.invincible = Math.max(G.invincible, 22); // brief i-frames so a dash can punch through a hit
+  // Speed-line burst streaking backward from the player — since the player no longer moves
+  // sideways during a dash, this is what reads as "blasting forward" at the moment it triggers.
+  for(let i=0;i<10;i++){
+    G.particles.push({x:G.x+4, y:G.y+18+Math.random()*40, vx:-(5+Math.random()*6), vy:(Math.random()-0.5)*1.5,
+                       life:18+Math.random()*10, size:3+Math.random()*3, color:i%2?'#a855f7':'#e0c0ff'});
+  }
   playSound('dash');
 }
 
@@ -852,6 +864,10 @@ function togglePause(){
   G.paused = !G.paused;
   if(G.paused){
     if(animId) cancelAnimationFrame(animId);
+    document.getElementById('pauseKm').textContent = (G.score/600).toFixed(2);
+    document.getElementById('pauseCoins').textContent = G.coins;
+    document.getElementById('pauseCombo').textContent = G.comboBest;
+    document.getElementById('pauseLives').textContent = G.lives;
     document.getElementById('pauseOverlay').classList.remove('hidden');
   } else {
     document.getElementById('pauseOverlay').classList.add('hidden');
@@ -894,7 +910,11 @@ function gameLoop(ts) {
 // "going through the deathboxes" without dying actually looks like from the engine's point of view.
 function checkIntegrity(){
   if(!G || G.cheated) return;
-  if(Math.abs(G.score - G.frame) > 1e-6) G.cheated = true; // score and frame always move together
+  // score = frame + dashBonusAccum always, exactly: every dt added to score beyond the base
+  // 1:1 rate is the dash bonus (see update()), and dashBonusAccum tracks that running total.
+  // So this still catches direct G.score tampering while correctly allowing for legitimate
+  // dash-earned bonus distance.
+  if(Math.abs(G.score - (G.frame + G.dashBonusAccum)) > 1e-6) G.cheated = true;
   if(G.lives > G.maxLives) G.cheated = true;               // lives only ever decreases from the max
   if(G.invincible > 90) G.cheated = true;                  // loseLife() never grants more than 90 frames of grace
 }
@@ -914,6 +934,10 @@ function spawnObstacle(props){
 function update(dt) {
   G.frame += dt;
   G.score += dt;
+  // Dash bonus: while dashing, distance accrues faster — this is what makes the dash feel like
+  // real forward progress, since the player's screen position never moves (see below). Tracked
+  // in dashBonusAccum so checkIntegrity() can verify score against it exactly.
+  if(G.dash.active){ G.score += dt*1.5; G.dashBonusAccum += dt*1.5; }
   G.speed = Math.min(5 + G.score/800, 20);
 
   // Milestone: small celebration the instant a full km is crossed — frequent tiny
@@ -935,8 +959,11 @@ function update(dt) {
   }
 
   // Slow-motion affects only how fast obstacles/coins close in, not the score/distance rate —
-  // it's breathing room through a hard section, not free distance.
-  const effSpeed = G.speed * (G.slowmoTime>0 ? 0.5 : 1);
+  // it's breathing room through a hard section, not free distance. Dash is the opposite: the
+  // world rushes past faster while it's active, which is what actually sells "forward burst"
+  // here — the player sprite stays anchored in its lane (see dash block below), so the speed
+  // increase has to come from the scroll itself rather than from moving the player.
+  const effSpeed = G.speed * (G.slowmoTime>0 ? 0.5 : 1) * (G.dash.active ? 2.2 : 1);
   G.scroll += effSpeed*dt;
   if(G.invincible>0) G.invincible = Math.max(0, G.invincible-dt);
   if(G.magnetTime>0) G.magnetTime = Math.max(0, G.magnetTime-dt);
@@ -949,24 +976,22 @@ function update(dt) {
     if(G.dash.rechargeT >= rechargeTime){ G.dash.charges++; G.dash.rechargeT = 0; }
   }
 
-  // Anti-cheat: x must still be wherever we legitimately left it at the end of last frame.
-  // This has to run BEFORE the dash logic below touches G.x, or it would just be checking
-  // x against itself and could never catch a teleport.
-  if(Math.abs(G.x - G.expectedX) > 0.5) G.cheated = true;
+  // Anti-cheat: G.x has exactly one legitimate value now — G.baseX. Nothing in the game (including
+  // dash, see below) is allowed to move it anymore, so this can never be triggered by dashing or
+  // any other normal play; any deviation here is unambiguous tampering (e.g. a console teleport).
+  if(Math.abs(G.x - G.baseX) > 0.5) G.cheated = true;
 
-  // Dash: a short forward lurch (with i-frames already granted in doDash). Uses a monotonic
-  // ease-out (not a symmetric sine) so G.x only ever increases during the active dash — it
-  // never visibly slides backward. The return to the resting lane position happens as a single
-  // instant snap on the last frame instead of an animated glide, so the dash always reads as
-  // forward motion, not as "lurch forward then slide back."
+  // Dash: the player's screen position never changes — only the world's scroll speed does
+  // (see effSpeed above) and bonus distance accrues (see G.score above). This is deliberate:
+  // any dash that moves the player sideways and then returns to the resting lane position has
+  // to visibly slide back at some point, which reads as a "setback." Keeping the player
+  // anchored and making the WORLD rush past instead avoids that entirely — there's no return
+  // motion to ever look or feel backward.
   if(G.dash.active){
     G.dash.t += dt;
     const p = Math.min(1, G.dash.t/10);
-    const ease = 1 - Math.pow(1-p, 3); // easeOutCubic: fast initial punch, holds near max
-    G.x = G.baseX + ease*70;
-    if(p>=1){ G.dash.active=false; G.x=G.baseX; }
+    if(p>=1) G.dash.active=false;
   }
-  G.expectedX = G.x; // record where we're legitimately leaving it, checked again next frame
   checkIntegrity();
 
   // Physics (simplified semi-implicit Euler, scaled by dt for refresh-rate independence —
@@ -992,14 +1017,14 @@ function update(dt) {
     G.spawnTimer = 0;
     // After ~8km the floor on spawn gap drops further too — long runs really should get harder,
     // not just plateau once they hit the original 38-frame floor.
-    const gapFloor = G.score > 4800 ? 30 : 38;
+    const gapFloor = G.score > 4800 ? 35 : 38;
     G.spawnGap = Math.max(gapFloor, 100 - G.score/150);
     const cfg = G.R.obstacles || { types:['barrier','car','pit','truck','market_stall','camel','construction','rock','bird'], weights:[20,20,15,12,12,8,8,5,15] };
     const types = cfg.types, baseWeights = cfg.weights;
     // The further into a run you get, the more the hardest obstacle types crowd out the easy
-    // ones — same pool, shifting odds. Caps at 3.5x so it stays beatable, just relentless.
+    // ones — same pool, shifting odds. Caps at 2.2x so it stays beatable, just relentless.
     const kmNow = G.score/600;
-    const hardBoost = 1 + Math.min(2.5, kmNow*0.15);
+    const hardBoost = 1 + Math.min(1.2, kmNow*0.08);
     const weights = baseWeights.map((w,i)=> HARD_TYPES.has(types[i]) ? w*hardBoost : w);
     let total=weights.reduce((a,b)=>a+b,0), rand=Math.random()*total, cumul=0, t='barrier';
     for(let i=0;i<types.length;i++){cumul+=weights[i];if(rand<cumul){t=types[i];break;}}
@@ -1062,7 +1087,10 @@ function update(dt) {
   if(G.coinTimer>=48){
     const cx = G.W+50;
     let cy, blocked = true, tries = 0;
-    do{ cy = G.GROUND-70-Math.random()*90; blocked = isSpawnBlocked(cx, cy); tries++; } while(blocked && tries<6);
+    // Height band kept moderate (a quick hop's worth, not a full jump's apex) — coins higher
+    // than this needed split-second timing at the peak of a jump to even reach, which is what
+    // made them feel impossible without the magnet pulling them in for you.
+    do{ cy = G.GROUND-55-Math.random()*55; blocked = isSpawnBlocked(cx, cy); tries++; } while(blocked && tries<10);
     if(!blocked){
       G.coinTimer = 0;
       G.coinObjs.push({x:cx, y:cy, collected:false, frame:0});
@@ -1076,7 +1104,7 @@ function update(dt) {
   if(G.powerupTimer >= 480){
     const px = G.W+50;
     let py, blocked = true, tries = 0;
-    do{ py = G.GROUND-90-Math.random()*70; blocked = isSpawnBlocked(px, py); tries++; } while(blocked && tries<6);
+    do{ py = G.GROUND-65-Math.random()*60; blocked = isSpawnBlocked(px, py); tries++; } while(blocked && tries<10);
     if(!blocked){
       G.powerupTimer = 0;
       const kinds = ['shield','magnet','slowmo'];
@@ -1140,7 +1168,13 @@ function update(dt) {
   G.powerups.forEach(p=>{ p.x-=effSpeed*dt; p.frame+=dt; });
   G.powerups = G.powerups.filter(p=>p.x>-30 && !p.collected);
 
-  // Collisions
+  // Collisions — skipped entirely while G.invincible > 0, which is the ONLY way to pass through
+  // a hazard and survive. The three legitimate sources of invincibility are: a dash (22 frames,
+  // see doDash), a shield breaking (45 frames), or the grace period after taking a hit (90 frames,
+  // the maximum any legitimate path ever grants). checkIntegrity() flags G.invincible > 90 as
+  // cheating — so going through an obstacle while dashing is always allowed (that's the dash's
+  // whole purpose), while going through one with no dash, no shield, and no recent hit is only
+  // possible by directly tampering with G.invincible past what any real play could produce.
   if(G.invincible===0){
     const isDucking = G.ducking && G.onGround;
     const pr = isDucking
@@ -1170,10 +1204,12 @@ function update(dt) {
     }
   }
 
-  // Coins
+  // Coins — caught with a generous hitbox (34x34, not the coin's visual size) so grabbing one
+  // doesn't require pixel-perfect alignment; the magnet should feel like a bonus, not a
+  // requirement for coins that were otherwise basically untouchable.
   const pr2 = {x:G.x+4, y:G.y+4, w:28, h:64};
   G.coinObjs.forEach(c=>{
-    if(!c.collected && overlap(pr2,{x:c.x-12,y:c.y-12,w:24,h:24})){
+    if(!c.collected && overlap(pr2,{x:c.x-17,y:c.y-17,w:34,h:34})){
       c.collected=true;
       G.combo++; G.comboTimer = 0;
       if(G.combo > G.comboBest) G.comboBest = G.combo;
@@ -1191,7 +1227,7 @@ function update(dt) {
 
   // Power-ups
   G.powerups.forEach(p=>{
-    if(!p.collected && overlap(pr2,{x:p.x-14,y:p.y-14,w:28,h:28})){
+    if(!p.collected && overlap(pr2,{x:p.x-16,y:p.y-16,w:32,h:32})){
       p.collected=true;
       const durMult = hasPerk(G.charDef,'powerup_boost') ? 1.5 : 1;
       if(p.kind==='shield') G.shield = true;
@@ -1722,7 +1758,8 @@ function draw(ctx) {
 
   // Player (flash when invincible)
   if(G.dash.active){
-    // Motion trail while dashing — a few faded copies behind the current position
+    // Speed-streak silhouettes behind the player while dashing. The player's position itself
+    // doesn't move during a dash (see update()) — this is purely a "blasting forward" read.
     for(let i=1;i<=3;i++){
       ctx.globalAlpha = 0.18*(4-i)/3;
       drawCharacter(ctx, G.char, G.x-i*14, G.y, G.frame);
@@ -2113,7 +2150,10 @@ async function saveScore(km, coins, club) {
     km = Number(km); coins = Number(coins);
     if(!Number.isFinite(km) || !Number.isFinite(coins)) return await lbRead();
     const elapsedSec = G && G.startTime ? Math.max(1,(Date.now()-G.startTime)/1000) : 1;
-    const maxPlausibleKm = (elapsedSec/10) + 0.5;       // game speed is capped, so distance per second is bounded
+    // game speed is capped, so distance per second is bounded — the 1.15x accounts for the
+    // legitimate dash bonus (see update()'s dashBonusAccum), which can add real extra distance
+    // over a long run; without this, heavy (legitimate) dash usage could get silently clamped.
+    const maxPlausibleKm = (elapsedSec/10)*1.15 + 0.5;
     const maxPlausibleCoins = Math.ceil(elapsedSec*1.5) + 5; // coins spawn on a fixed timer
     km = Math.max(0, Math.min(km, maxPlausibleKm));
     coins = Math.max(0, Math.min(Math.round(coins), maxPlausibleCoins));
